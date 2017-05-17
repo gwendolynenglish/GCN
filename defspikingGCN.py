@@ -70,11 +70,6 @@ def spikingGCN(parameters):
         torusweights = np.asmatrix(torusweights)
         torusweights = torusweights.flatten()
         
-    if periodicity == 'periodic' and connectivity == 'local':
-        torusweightslocal = pd.read_csv('TorusWeightsLocal.csv', header=None, skiprows =[], dtype = int)
-        torusweightslocal = np.asmatrix(torusweightslocal)
-        torusweightslocal = torusweightslocal.flatten()
-        
     #Possibly change to auto adjust the init values according to the v-threshold and v-reset?   
     if initialization == 'init': 
         init_values = pd.read_csv("AperiodicSpikeInit_67-63.csv", header=None, skiprows =[0], dtype = float64)
