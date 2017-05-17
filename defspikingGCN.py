@@ -9,6 +9,9 @@ import numpy as np
 import csv 
 import pandas as pd 
 import math 
+import matplotlib
+import matplotlib.pyplot as plt
+from brian2.equations import refractory
 
 start_scope()
 set_device('cpp_standalone')
@@ -66,7 +69,12 @@ def spikingGCN(parameters):
         torusweights = pd.read_csv('TorusWeights.csv', header=None, skiprows =[], dtype = float64)
         torusweights = np.asmatrix(torusweights)
         torusweights = torusweights.flatten()
-
+        
+    if periodicity == 'periodic' and connectivity == 'local':
+        torusweightslocal = pd.read_csv('TorusWeightsLocal.csv', header=None, skiprows =[], dtype = int)
+        torusweightslocal = np.asmatrix(torusweightslocal)
+        torusweightslocal = torusweightslocal.flatten()
+        
     #Possibly change to auto adjust the init values according to the v-threshold and v-reset?   
     if initialization == 'init': 
         init_values = pd.read_csv("AperiodicSpikeInit_67-63.csv", header=None, skiprows =[0], dtype = float64)
@@ -79,7 +87,7 @@ def spikingGCN(parameters):
     
     #Set Grid Cell network neuronal dynamics
     eqs = '''
-    dv/dt = (v_rest - v + Rm * (I_ext + I_vel)) / tau : volt 
+    dv/dt = (v_rest - v + Rm * (I_ext + I_vel)) / tau : volt (unless refractory) 
     I_vel = vel_drive * (xdir * xmotionarray(t) + ydir * ymotionarray(t)) : amp 
     x : 1
     y : 1
@@ -97,12 +105,16 @@ def spikingGCN(parameters):
     #==============================================================================
     #Functions that define x & y locations of neurons within the grid field.      
     def xcoord(rows):
-        xarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(1,(rows/2)+1,1)))
+        #xarray = np.hstack(np.arange(1,rows + 1, 1))
+        xarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(0, (rows/2),1)))
+        #xarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(1,(rows/2)+1,1)))
         x = np.tile(xarray,rows)
         return x
 
     def ycoord(rows):
-        yarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(1,(rows/2)+1,1)))
+        #yarray = np.hstack(np.arange(1, rows + 1, 1))
+        yarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(0,(rows/2),1)))
+        #yarray = np.hstack((np.arange(-(rows/2),0, 1), np.arange(1,(rows/2)+1,1)))
         y = []
         for i in yarray:
             y = np.hstack((y, np.tile(i,rows)))
@@ -147,7 +159,8 @@ def spikingGCN(parameters):
     #assigns them as initial values to neurons with the GridCell NeuronGroup  
     locations = {'x': xcoord(rows),
                  'y': ycoord(rows)}
-  
+    
+    print(xcoord(rows))
     #Create locations and orientation preferences.          
     preferred_direction = {'xdir' : pref_dir_x(rows),
                            'ydir' : pref_dir_y(rows)}
@@ -156,17 +169,17 @@ def spikingGCN(parameters):
     wrapper_values = {'wrapper' : wrapper(rows, R, deltar, ao, xcoord(rows), ycoord(rows))}
 
     #Set initialized membrane potential values 
-    initialization = {'v' : init_values}
-    
+    if initialization == 'init': initialization = {'v' : init_values}
     GridCells.set_states(locations)
     GridCells.set_states(preferred_direction)
-    GridCells.set_states(initialization)
+    if initialization == 'init' : GridCells.set_states(initialization)
+    if initialization == 'uninit' : GridCells.v = '-(rand() * 4 + 63) * mV'
     if periodicity == 'aperiodic': GridCells.set_states(wrapper_values)
     
     #==============================================================================
     # Create recurrent synapses 
     #==============================================================================
-    RecSyn = Synapses(GridCells, GridCells, 'w : volt', on_pre = 'v_post +=w', delay = 2 * ms)
+    RecSyn = Synapses(GridCells, GridCells, 'w : volt', on_pre = 'v_post +=w')
     if connectivity == 'Gaussian' and periodicity == 'periodic': 
         RecSyn.connect()
         RecSyn.w = on_pre * torusweights
@@ -174,22 +187,44 @@ def spikingGCN(parameters):
         RecSyn.connect()
         RecSyn.w = on_pre * 'a * exp(-gamma* ((sqrt((x_post - x_pre - l * xdir_pre)**2 + (y_post - y_pre - l * ydir_pre)**2)))**2) - exp(-beta * ((sqrt((x_post - x_pre - l * xdir_pre)**2 + (y_post - y_pre - l * ydir_pre)**2)))**2)'
     if connectivity == 'local' and periodicity == 'periodic':
-        RecSyn.connect(condition = 'sqrt((abs(x_post) - abs(x_pre) - l * xdir_pre)**2 + (abs(y_post) - abs(y_pre) - l * ydir_pre)**2) <= connectivityradius' )
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - l * xdir_pre)**2 + (y_pre - y_post - l * ydir_pre)**2) <= connectivityradius') 
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post + 128 - l * xdir_pre)**2 + (y_pre - y_post - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - 128 - l * xdir_pre)**2 + (y_pre - y_post - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - l * xdir_pre)**2 + (y_pre - y_post - 128 - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - l * xdir_pre)**2 + (y_pre - y_post + 128 - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post + 128 - l * xdir_pre)**2 + (y_pre - y_post + 128 - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post + 128 - l * xdir_pre)**2 + (y_pre - y_post - 128 - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - 128 - l * xdir_pre)**2 + (y_pre - y_post + 128 - l * ydir_pre)**2) <= connectivityradius')
+        RecSyn.connect(condition = 'sqrt((x_pre - x_post - 128 - l * xdir_pre)**2 + (y_pre - y_post - 128 - l * ydir_pre)**2) <= connectivityradius')
+        
+        #RecSyn.connect(condition = 'sqrt((abs(x_post) - abs(x_pre) - l * xdir_pre)**2 + (abs(y_post) - abs(y_pre) - l * ydir_pre)**2) <= connectivityradius' )
+        #RecSyn.connect(condition = 'sqrt((abs(x_post) - abs(x_pre) - l * xdir_post)**2 + (abs(y_post) - abs(y_pre) - l * ydir_post)**2) <= connectivityradius' )
         RecSyn.w = on_pre
     if connectivity == 'local' and periodicity == 'aperiodic':
         RecSyn.connect(condition = 'sqrt((x_post - x_pre - l * xdir_pre)**2 + (y_post - y_pre - l * ydir_pre)**2) <= connectivityradius' )
         RecSyn.w = on_pre
-    RecSyn.w['i==j'] = 0 * volt   #Ensure no impact from self-connections 
-    
+    #RecSyn.w['i==j'] = 0 * volt   #Ensure no impact from self-connections 
+    if connectivity == 'local': RecSyn.delay = 'rand() * 5 * ms' #Introduce random synaptic delays between 1-5 ms
+    #RecSyn.delay = '(sqrt((abs(x_post) - abs(x_pre) - l * xdir_pre)**2 + (abs(y_post) - abs(y_pre) - l * ydir_pre)**2) * 5/8) * ms'
+    #above line makes synaptic delay dependent on physical distance 
     #==============================================================================
     # Create monitors and run simulation 
     #==============================================================================
     
     SpikesMon = SpikeMonitor(GridCells)
+    
+    #I_vel = StateMonitor(GridCells, ('I_vel'), record= True)    
+    
     defaultclock.dt = sim_dt
     run(runtime, report = 'text')
+  
+    #plt.plot(I_vel.t/ms, I_vel.I_vel[8176]/mA, label='8176')
+    #plt.savefig('velocitycurrent8176.png')
+    #plt.plot(I_vel.t/ms, I_vel.I_vel[12304]/mA, label='12304')
+    #plt.savefig('velocitycurrent12304.png')
+    
     SpikeTrainsDict = SpikesMon.spike_trains()
     
-    print(RecSyn.w[])
-    
-    return((SpikeTrainsDict))
+   
+
+    return((SpikeTrainsDict, SpikesMon))

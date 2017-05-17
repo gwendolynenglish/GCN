@@ -24,7 +24,7 @@ def spikes_ani(monitor, rows, runtime, dt):
     plt.xlabel("Planar Representation of Spatially Organized Grid Cells")
     plt.xlim(1, rows)
     plt.ylim(1, rows)
-    plt.axis('equal')
+    #plt.axis('equal')
     plt.axis([0, rows, 0, rows])
     yellow_red = brewer2mpl.get_map('Reds', 'sequential', 7, reverse = True).mpl_colormap
     sliceset = []    
